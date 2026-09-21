@@ -21,6 +21,32 @@ import argparse
 import openpyxl
 
 
+def _num(v):
+    """Coerce a cell value to float, or None if it isn't a number.
+
+    Yardi sometimes stores totals/values as *text* (e.g. '210,727.43',
+    '$1,234.56', or negatives in accounting style '(4,270.17)'). Treat those as
+    the numbers they represent so we neither crash nor silently skip them.
+    """
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        s = v.strip().replace("$", "").replace(",", "")
+        if not s or s in ("-", "--"):
+            return None
+        neg = s.startswith("(") and s.endswith(")")
+        if neg:
+            s = s[1:-1].strip()
+        try:
+            n = float(s)
+        except ValueError:
+            return None
+        return -n if neg else n
+    return None
+
+
 def compute(path):
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb.worksheets[0]  # rent roll is always the first sheet
@@ -62,11 +88,11 @@ def compute(path):
         if not isinstance(unit, str) or "-" not in unit:
             continue  # skip blanks / non-unit rows; real unit ids look like "102-1A"
         units += 1
-        k = ws.cell(row=r, column=kcol).value
-        m = ws.cell(row=r, column=mcol).value
-        if isinstance(k, (int, float)):
+        k = _num(ws.cell(row=r, column=kcol).value)
+        m = _num(ws.cell(row=r, column=mcol).value)
+        if k is not None:
             total_charges += k
-        if isinstance(m, (int, float)):
+        if m is not None:
             if m > 0:
                 positive_balances += m
                 resident = ws.cell(row=r, column=cols.get("Resident", 5)).value
@@ -84,7 +110,7 @@ def compute(path):
         "collected": total_charges - positive_balances,
         "rate": rate,
         "owing": owing,
-        "report_total_charges": ws.cell(row=total_row, column=kcol).value if total_row <= ws.max_row else None,
+        "report_total_charges": _num(ws.cell(row=total_row, column=kcol).value) if total_row <= ws.max_row else None,
     }
 
 
